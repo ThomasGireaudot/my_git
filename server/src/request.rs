@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
+use serde_json::Value;
 
-pub enum BodyField {
-    List(Vec<BodyField>),
+pub enum BodyType {
+    Json(Value),
     Text(String)
 }
 
@@ -11,7 +12,7 @@ pub enum RequestValue {
     Route(String),
     Headers(HashMap<String, String>),
     Parameters(HashMap<String, Vec<String>>),
-    Body(HashMap<String, BodyField>)
+    Body(BodyType)
 }
 
 pub struct Request {
@@ -26,11 +27,11 @@ impl Index<&str> for Request {
     }
 }
 
-impl IndexMut<&str> for Request {
-    fn index_mut(&mut self, index: &str) -> &mut Self::Output {
-        self.data.get_mut(index).expect("Key not found")
-    }
-}
+// impl IndexMut<&str> for Request {
+//     fn index_mut(&mut self, index: &str) -> &mut Self::Output {
+//         self.data.get_mut(index).expect("Key not found")
+//     }
+// }
 
 fn print_type<T: ?Sized>(_: &T) { 
     println!("{:?}", std::any::type_name::<T>());
@@ -46,14 +47,18 @@ impl Request {
         self.data.insert(String::from("method"), method_value);
     }
     fn parse_route(&mut self, route: &str) {
+        // split endpoint and parameters
         let route_elements: Vec<&str> = route.split('?').collect();
         self.data.insert(String::from("route"), RequestValue::Route(route_elements[0].to_string()));
         if route_elements.len() == 2 {
             self.data.insert(String::from("params"), RequestValue::Parameters(HashMap::new()));
+            // split parameters
             let params: Vec<&str> = route_elements[1].split('&').collect();
             for param in params {
+                // split param name and values
                 let param_parts: Vec<&str> = param.split('=').collect();
                 let key = param_parts[0].to_string();
+                // split values
                 let values_split: Vec<&str> = param_parts[1].split(',').collect();
                 if let RequestValue::Parameters(params) = self.data.get_mut("params").unwrap() {
                     for split in values_split {
@@ -81,18 +86,39 @@ impl Request {
             line = iterator.next().unwrap_or("");
         }
     }
+    fn parse_body(&mut self, body: &str) {
+        if let Some(RequestValue::Headers(headers)) = self.data.get("headers") {
+            match headers["Content-Type"].as_str() {
+                "application/json" => {
+                    let json = serde_json::from_str(body).expect("Failed to parse JSON body.");
+                    self.data.insert(String::from("body"), RequestValue::Body(BodyType::Json(json)));
+                },
+                _ => {
+                    self.data.insert(String::from("body"), RequestValue::Body(BodyType::Text(body.to_string())));
+                }
+            }
+        }
+    }
     pub fn load_request(&mut self, request: &str) -> bool {
         let mut iterator = request.lines();
         let http_endpoint: Vec<&str> = iterator.next().unwrap_or("").split(' ').collect();
-        if http_endpoint.len() != 3 {
+        if http_endpoint.len() != 3 || http_endpoint[2] != "HTTP/1.1" {
             return false;
         }
         self.parse_method(http_endpoint[0]);
         self.parse_route(http_endpoint[1]);
         self.parse_headers(&mut iterator);
-        let Some(RequestValue::Method(method)) = self.data.get_mut("method") else { todo!() };
-        if method == "POST" {
-            self.data.insert(String::from("body"), RequestValue::Body(HashMap::new()));
+        match (self.data.get("method"), self.data.get("headers")) {
+            (Some(RequestValue::Method(method)), Some(RequestValue::Headers(headers))) => {
+                if method == "POST" {
+                    self.parse_body(iterator.collect::<String>().as_str());
+                    // self.data.insert(String::from("body"), RequestValue::Body(Body::new(&headers["Content-Type"].as_str())));
+                    // if let Some(RequestValue::Body(body)) = self.data.get_mut("body") {
+                    //     body.parse(iterator.collect::<String>().as_str());
+                    // }
+                }
+            },
+            (_, _) => {}
         }
         return true;
     }

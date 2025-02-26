@@ -6,22 +6,48 @@ use crate::request::{Request, RequestValue};
 use crate::responses::{response_404, response_400};
 
 use crate::endpoints::default;
-use crate::endpoints::print;
+use crate::endpoints::test;
 
 type RouteHandler = Box<dyn Fn(Request) -> String + Send + Sync>;
 
+pub struct Route {
+    method: String,
+    endpoint: String,
+    handler: RouteHandler
+}
+
+impl Route {
+    pub fn new(method: &str, endpoint: &str, handler: RouteHandler) -> Self {
+        Route {
+            method: method.to_string(),
+            endpoint: endpoint.to_string(),
+            handler
+        }
+    }
+}
+
 pub struct Router {
-    routes: HashMap<String, RouteHandler>,
+    routes: Vec<Route>,
     listener: TcpListener
+}
+
+macro_rules! add_route {
+    ($routes:expr, $method:literal, $endpoint:literal, $handler:path) => {
+        $routes.push(Route::new(
+            $method,
+            $endpoint,
+            Box::new(|req: Request| $handler(req)) as RouteHandler
+        ));
+    };
 }
 
 impl Default for Router {
     fn default() -> Self {
-        let mut routes = HashMap::new();
+        let mut routes: Vec<Route> = Vec::new();
 
-        routes.insert("GET / ".to_string(), Box::new(|req: Request| default::get(req)) as RouteHandler);
-        routes.insert("GET /print".to_string(), Box::new(|req: Request| print::get(req)) as RouteHandler);
-        routes.insert("POST /print".to_string(), Box::new(|req: Request| print::post(req)) as RouteHandler);
+        add_route!(routes, "GET", "/", default::get);
+        add_route!(routes, "GET", "/test", test::get);
+        add_route!(routes, "POST", "/test", test::post);
 
         let listener = TcpListener::bind("127.0.0.1:3000").expect("Cannot start the server.");
         println!("Serveur started on http://127.0.0.1:3000");
@@ -41,13 +67,14 @@ impl Router {
             }
         }
     }
-    pub fn handle_stream(&self, mut stream: TcpStream) {
+    fn handle_stream(&self, mut stream: TcpStream) {
         let mut buffer = [0; 2048];
 
         match stream.read(&mut buffer) {
-            Ok(_) => {
-                let request = str::from_utf8(&buffer).unwrap_or("");
-                println!("Request received:\n{}", request);
+            Ok(bytes_read) => {
+                // using bytes_read to avoid reading the whole buffer
+                let request = &str::from_utf8(&buffer).unwrap_or("")[..bytes_read];
+                // println!("Request received:\n{}", request);
 
                 // Trying out custom operators
                 let mut parsed_request = Request::new();
@@ -73,17 +100,16 @@ impl Router {
             Err(e) => eprintln!("Error while reading request: {}", e),
         }
     }
-    pub fn handle_endpoint(&self, request: Request) -> String {
-        for endpoint in self.routes.keys() {
-            match (&request["method"], &request["route"]) {
-                (RequestValue::Method(method), RequestValue::Route(route)) => {
-                    let split_endpoint: Vec<&str> = endpoint.split(' ').collect();
-                    if split_endpoint[0].starts_with(method) && route.starts_with(split_endpoint[1]) {
-                        return (self.routes[endpoint])(request);
+    fn handle_endpoint(&self, request: Request) -> String {
+        match (&request["method"], &request["route"]) {
+            (RequestValue::Method(method), RequestValue::Route(route)) => {
+                for current_route in &self.routes {
+                    if current_route.method.starts_with(method) && route.starts_with(&current_route.endpoint) {
+                        return (current_route.handler)(request);
                     }
                 }
-                _ => {}
             }
+            _ => {}
         }
         response_404()
     }
