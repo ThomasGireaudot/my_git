@@ -21,6 +21,7 @@ impl Default for Router {
 
         routes.insert("GET / ".to_string(), Box::new(|req: String| default::get(req)) as RouteHandler);
         routes.insert("GET /print".to_string(), Box::new(|req: String| print::get(req)) as RouteHandler);
+        routes.insert("POST /print".to_string(), Box::new(|req: String| print::post(req)) as RouteHandler);
 
         let listener = TcpListener::bind("127.0.0.1:3000").expect("Cannot start the server.");
         println!("Serveur started on http://127.0.0.1:3000");
@@ -47,13 +48,17 @@ impl Router {
             Ok(_) => {
                 let request = str::from_utf8(&buffer).unwrap_or("");
                 println!("Request received:\n{}", request);
-                // let parsed_request = Request::new(request);
+
+                // Trying out custom operators
+                let mut parsed_request = Request::new();
+                parsed_request.load_request(request);
                 // if let RequestValue::Method(method) = &parsed_request["method"] {
                 //     println!("Method: {}", method);
                 // }
                 // if let RequestValue::Headers(headers) = &parsed_request["headers"] {
                 //     println!("Header: {}", headers["Accept"]);
                 // }
+
                 let response = self.handle_endpoint(request.to_string());
                 stream.write_all(response.as_bytes()).unwrap();
             }
